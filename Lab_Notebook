@@ -1,0 +1,135 @@
+**Date: 6/10/2026**
+## AI Copilot for Single-Cell Transcriptomics
+### Project Goal
+**The goal of this project is to build an AI-powered assistant that allows bioinformaticians to interact with single-cell RNA-seq datasets using natural language. Rather than manually running analysis commands, a user will be able to ask questions such as:**
+
+-Which clusters are present in this dataset?
+-Show marker genes for cluster 3.
+-Generate a UMAP colored by cell type.
+-Compare cluster 2 and cluster 5.
+
+**The assistant will determine which analysis function to run and return both the results and a summary.**
+
+### Initial Project Planning
+
+Several potential project directions were considered, including building a fully autonomous bioinformatics agent capable of performing complete end-to-end analyses. After evaluating the scope, the project was simplified to focus on a more realistic and achievable objective.
+
+The project will begin as an AI copilot for single-cell transcriptomics rather than a fully autonomous research agent.
+
+#### Key design decisions:
+
+ -Use public datasets rather than research data from ongoing laboratory projects.
+ -Develop and test the system locally before considering HPC deployment.
+ -Build core analysis functions first and add the AI layer later.
+ -Focus on a small number of reliable tools rather than many partially implemented features.
+ -Dataset Strategy
+
+**The initial prototype will use the Scanpy PBMC3K processed dataset.**
+
+Rationale:
+
+ -Publicly available
+ -Small enough to run locally
+ -Commonly used benchmark dataset
+ -Already processed and suitable for rapid prototyping
+ -Avoids privacy, reproducibility, and data-sharing concerns
+
+
+### Environment Setup and making the tools 
+
+1. Project directory created:
+```
+ mkdir singlecell-ai
+```
+2. Conda environment created:
+```
+ conda create -n sc_agent python=3.10 -y
+```
+3. Python version:
+
+Python 3.10
+
+4. Packages installed:
+
+scanpy
+pandas
+matplotlib
+openai
+python-dotenv
+
+```
+pip install scanpy pandas matplotlib openai python-dotenv
+```
+
+
+5. Create some subfolder
+```
+mkdir src
+mkdir outputs
+mkdir notebooks
+```
+6. Create a file in src
+```
+touch src/tools.py
+```
+7. Made the first tool which is load_dataset() using scanpy within tools.py. 
+
+8. Defining the second tool that is called get_cluster_summary(). This returns the number of cells within each cluster.
+
+9. Defining the third tool that is called query_gene_expression(). It basically is designed to return the avergae expression of gene acoross clusters. We are testing the MS41 gene. Results appear to be consistent with biology.
+>Note: A pandas FutureWarning appeared during groupby. This was fixed by adding observed=True to the groupby command.
+
+10. Next I defined the tool for making UMAPs. The output is saved to singlecell-ai/outputs. Looking at the produced image I see clear clusters.
+
+11. Lastly making a function that can find the top 10 marker genes for the desired cluster. From the results of the markers, it is very consistent.
+
+12. Adding argparse to my main function to make it easily runnable on the command line and so that I do not have to edit the file every single time.
+
+13. Next, I am exporting the environment, so that the project is more reproducible
+
+### Connect the tools with LLM
+1. Install rich that is an extra package needded for LLMs. This helps our output look prettier.
+```
+pip install rich
+
+```
+
+
+2. Create a .env file and put the API key in there. API helps us run an LLM. I used Claude to get an API key, so I will install Anthropic. The original plan was Open AI, but it worked out this way.
+
+3. Also create another empty file called agent.py. This is the file where we build our agent.
+
+4. Built my agent in the file, just to first undertsnd if the API key is connecting with and I can gain access. We have successfully gained access to Claude.
+>Note: Initially I got thrown an error because it was not connecting since I made a spelling error in the .env file. Next, I was getting an error because of the wrong model name, but fixed that too.
+
+5. At the very top I added an iport line, to import the tools I made in the tools.py file.
+
+6. Modified the Claude function so that Claude no longer answers biological questions directly. Instead, it acts as a router that interprets the user's request and returns a command. For example, when asked for marker genes, Claude returns:
+
+    CALL_MARKERS:B cells
+
+instead of generating marker genes itself. I then modified the main section of agent.py to recognize this command, extract the cluster name, and pass it to my existing find_markers() function. This creates the first end-to-end agent workflow where Claude determines which tool to use and Python executes the actual bioinformatics analysis on the dataset
+
+7. Expanded the routing prompt to support multiple tools. Added a second command, CALL_GENE:<gene_name>, for gene expression queries. Modified the main section of agent.py to recognize this command, extract the gene name, and pass it to the query_gene_expression() function. This allows the agent to determine whether a user is requesting marker genes or gene expression analysis and route the request to the appropriate bioinformatics tool. Successfully tested using the query "Which clusters express MS4A1?" and confirmed that the results were generated from the dataset rather than from Claude's internal knowledge.
+
+8. Expanded the routing prompt to support cluster summary requests by adding the command CALL_SUMMARY. Modified the main section of agent.py to recognize this command and route it to the get_cluster_summary() function. This allows users to ask high-level exploratory questions such as "How many clusters are in this dataset?" or "Give me a summary of the cell populations" using natural language. Successfully tested the workflow and confirmed that the cluster counts were generated directly from the dataset through the analysis tool rather than from Claude's internal knowledge.
+
+9. Expanded the routing prompt to support UMAP visualization requests by adding the command CALL_UMAP. Modified the main section of agent.py to recognize this command and route it to the plot_umap() function. This allows users to generate visualizations using natural language queries such as "Show me a UMAP" or "Generate a UMAP plot." Successfully tested the workflow and confirmed that the agent generated and saved a UMAP figure (outputs/umap.png) using the dataset rather than relying on Claude. This is the first agent tool that produces a visual output instead of a text-based result.
+
+10. Modified load_dataset() so the agent can either load the default PBMC demo dataset or a user-provided .h5ad file. Tested this by creating pbmc_test.h5ad and entering that file path when prompted. The agent successfully loaded the file and returned the cluster summary. I also tested pressing Enter with no file path, which loaded the default PBMC dataset. Both outputs matched because pbmc_test.h5ad was created from the same PBMC demo dataset. This confirms that the dataset-loading logic works, even though the test file and default dataset contain the same data.
+
+11. Created a .gitignore file to prevent sensitive files and large datasets from being committed to GitHub. Added rules to exclude API keys (.env), generated outputs, Python cache files, and .h5ad datasets. Verified that the API key file is not tracked by Git to ensure credentials remain secure when the project is shared publicly.
+
+12. Made the cluster/cell-type column configurable instead of hard-coding "louvain". After loading a dataset, the agent now prints the available metadata columns from adata.obs and asks the user which column should be used for cluster-based analysis. This makes the tool more flexible for user-provided datasets, since different single-cell objects may store annotations under names such as leiden, cell_type, seurat_clusters, or annotation. The selected column is then passed into the marker gene, gene expression, cluster summary, and UMAP tools.
+
+13. Added basic error handling to make the agent more reliable. The agent now catches invalid dataset paths, unreadable files, incorrect metadata columns, and invalid gene or cluster requests. Instead of crashing with a Python traceback, the program returns a clearer message to the user explaining what went wrong and what to check.
+
+14. Added functionality to save analysis results to files instead of only printing them to the terminal. Marker gene tables and gene expression summaries are now exported as CSV files in the outputs directory, and the agent reports the file path so users know where the results were saved.
+
+15. Improved the routing prompt by introducing a CALL_UNKNOWN command. This prevents the agent from forcing vague or unrelated questions into an existing analysis tool. If a request is unclear, the agent now asks the user to specify the desired analysis and provides examples of supported queries.
+
+16. Added validation for cluster names during marker gene analysis. Previously, entering an invalid cluster caused Scanpy to throw an error and terminate the program. The agent now checks whether the requested cluster exists in the selected metadata column and displays the available cluster names if the input is invalid.
+
+17. Added support for dataset-wide marker gene analysis through a new CALL_ALL_MARKERS command. This enables users to request marker genes for the entire dataset rather than a single cluster. The agent performs marker analysis across all groups and saves the combined results to a CSV file for downstream interpretation.
+
+18. Added a dataset information tool to provide a high-level overview of loaded datasets. Introduced the CALL_DATASET_INFO command and implemented a function to report the number of cells, number of genes, and available metadata columns. This allows users to quickly inspect newly loaded datasets and understand the annotation fields available for downstream analysis.

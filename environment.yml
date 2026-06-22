@@ -1,0 +1,6 @@
+name: sc_agent
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+prefix: /home/manasvil2203/miniforge3/envs/sc_agent

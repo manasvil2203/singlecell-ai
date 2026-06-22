@@ -1,0 +1,12 @@
+# API keys
+.env
+
+# User datasets
+*.h5ad
+
+# Generated outputs
+outputs/
+
+# Python cache
+__pycache__/
+*.pyc
