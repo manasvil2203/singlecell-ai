@@ -2,7 +2,9 @@
 
 An AI-powered copilot for single-cell RNA-seq analysis built with Python, Scanpy, and Anthropic's Claude API.
 
-Instead of generating biological answers directly, the agent acts as a routing layer between natural language queries and analysis tools. Results are produced from the underlying dataset using Scanpy, ensuring that outputs are data-driven rather than based on the LLM's internal knowledge.
+Instead of generating biological answers directly, the agent acts as a routing layer between natural language queries and analysis tools. All analyses are performed on the loaded dataset using Scanpy, ensuring that results are data-driven rather than based on the LLM's internal knowledge.
+
+---
 
 ## Features
 
@@ -14,8 +16,45 @@ Instead of generating biological answers directly, the agent acts as a routing l
 * Dataset-wide marker gene analysis
 * Gene expression queries across clusters
 * UMAP visualization
+* Automatic cluster annotation
 * Automatic saving of results and figures
 * Basic error handling for invalid files, metadata columns, genes, and clusters
+
+---
+
+## Automatic Cluster Annotation
+
+The agent can perform preliminary cluster annotation using marker genes.
+
+When the user asks:
+
+```text
+Annotate my clusters
+```
+
+the workflow is:
+
+```text
+Cluster
+    ↓
+Marker gene identification (Scanpy)
+    ↓
+Top marker genes
+    ↓
+Claude interpretation
+    ↓
+Predicted cell type
+```
+
+Predicted annotations are saved to:
+
+```text
+outputs/cluster_annotations.csv
+```
+
+Cluster annotation is intended as a starting point for interpretation rather than a replacement for expert review or reference-based annotation.
+
+---
 
 ## Project Structure
 
@@ -31,6 +70,8 @@ singlecell-ai/
 └── README.md
 ```
 
+---
+
 ## Example Questions
 
 ```text
@@ -45,7 +86,11 @@ Find markers for all clusters
 Which clusters express MS4A1?
 
 Show me a UMAP
+
+Annotate my clusters
 ```
+
+---
 
 ## How It Works
 
@@ -64,6 +109,8 @@ Dataset-Derived Result
 ```
 
 The LLM determines which analysis tool to use, while all computations are performed using Scanpy on the loaded dataset.
+
+---
 
 ## Installation
 
@@ -93,10 +140,14 @@ Run the agent:
 python src/agent.py
 ```
 
+---
+
 ## Future Directions
 
 * Differential expression analysis
-* Automatic cluster annotation
+* Reference-based cluster annotation
 * Heatmap generation
 * Multi-question conversational sessions
 * Additional visualization tools
+* Support for tissue-specific reference datasets
+* Integration with external annotation frameworks such as CellTypist and celldex
