@@ -133,3 +133,17 @@ instead of generating marker genes itself. I then modified the main section of a
 17. Added support for dataset-wide marker gene analysis through a new CALL_ALL_MARKERS command. This enables users to request marker genes for the entire dataset rather than a single cluster. The agent performs marker analysis across all groups and saves the combined results to a CSV file for downstream interpretation.
 
 18. Added a dataset information tool to provide a high-level overview of loaded datasets. Introduced the CALL_DATASET_INFO command and implemented a function to report the number of cells, number of genes, and available metadata columns. This allows users to quickly inspect newly loaded datasets and understand the annotation fields available for downstream analysis.
+
+19. Began developing automatic cluster annotation. First clarified the project structure: tools.py should remain focused on deterministic bioinformatics/data-processing functions, while agent.py should handle Claude API calls and LLM-based interpretation.
+
+20. Added a helper function in tools.py called get_top_marker_genes(). This function extracts the top marker gene names from the marker gene dataframe returned by find_markers(). This keeps marker extraction separate from the Claude-based annotation step.
+
+21. Added an annotation function in agent.py that sends top marker genes to Claude and asks for a likely cell type prediction. The prompt was designed so Claude uses marker genes as evidence rather than directly analyzing the dataset.
+
+22. Connected the annotation workflow to the agent using CALL_ANNOTATE. When the user asks to annotate clusters, the agent loops through each cluster, finds marker genes with Scanpy, extracts the top markers, sends them to Claude for interpretation, and saves the predicted annotations to outputs/cluster_annotations.csv.
+
+23. Tested automatic annotation on the PBMC demo dataset. Since this dataset is already annotated, it served as a useful validation check. The agent correctly identified broad cell types such as B cells, monocytes, NK cells, T cells, dendritic cells, and platelet/megakaryocyte-related cells based on marker genes.
+
+24. Refined the interpretation of the annotation output. The first annotation prompt asked for broad cell types, so Claude returned broader labels such as “T cell” instead of “CD4 T cells” or “CD8 T cells.” This was scientifically reasonable but less specific than the original labels.
+
+25. Decided not to overfit the annotation prompt with PBMC-specific examples. Instead, the annotation should be framed as preliminary marker-based interpretation. The prompt should ask Claude to be as specific as the marker evidence allows, return broad labels when evidence is ambiguous, and return “Unknown” when markers are insufficient.

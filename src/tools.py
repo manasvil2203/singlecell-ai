@@ -107,6 +107,12 @@ def get_dataset_info(adata):
 
     return info
 
+def get_top_marker_genes(markers_df, n=10):
+    """
+    Extract the top marker gene names from a marker gene dataframe.
+    """
+    return markers_df["names"].head(n).tolist()
+
 if __name__ == "__main__":
     import argparse
 

@@ -5,7 +5,8 @@ from tools import (
     query_gene_expression,
     get_cluster_summary,
     plot_umap,
-    get_dataset_info
+    get_dataset_info,
+    get_top_marker_genes
 )
 import os
 from dotenv import load_dotenv
@@ -137,6 +138,20 @@ Assistant: CALL_DATASET_INFO
 User: What metadata columns are available?
 Assistant: CALL_DATASET_INFO
 
+8. Automatic cluster annotation
+
+Return:
+
+CALL_ANNOTATE
+
+Examples:
+
+User: Annotate my clusters
+Assistant: CALL_ANNOTATE
+
+User: Predict cell types for this dataset
+Assistant: CALL_ANNOTATE
+
 Return ONLY the command.
 Do not explain anything.
 If the request is unclear, return CALL_UNKNOWN.
@@ -150,6 +165,42 @@ If the request is unclear, return CALL_UNKNOWN.
             {
                 "role": "user",
                 "content": user_question
+            }
+        ]
+    )
+
+    return response.content[0].text.strip()
+
+def annotate_cluster_with_claude(marker_genes):
+    """
+    Use Claude to suggest a likely broad cell type from marker genes.
+    """
+
+    marker_text = ", ".join(marker_genes)
+
+    prompt = f"""
+You are helping annotate single-cell RNA-seq clusters.
+
+Given these marker genes:
+
+{marker_text}
+
+Suggest the most likely cell type based only on these marker genes.
+Be as specific as the marker evidence allows.
+If the markers are ambiguous, return a broad cell type.
+If the markers are not enough, return "Unknown".
+Return only the cell type name.
+Do not explain.
+
+"""
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
             }
         ]
     )
@@ -187,7 +238,7 @@ if __name__ == "__main__":
         print(f"\nError: '{cluster_col}' not found in dataset metadata.")
         print("\nAvailable metadata columns:")
         print(list(adata.obs.columns))
-        exit()
+        exit() 
 
     question = input("\nAsk a single-cell analysis question: ")
     command = ask_claude(question)
@@ -249,6 +300,40 @@ if __name__ == "__main__":
 
             print("\nUMAP generation:")
             print(result)
+
+        elif command.startswith("CALL_ANNOTATE"):
+            import pandas as pd
+
+            annotations = []
+
+            clusters = adata.obs[cluster_col].unique()
+
+            for cluster in clusters:
+                print(f"\nAnnotating cluster: {cluster}")
+
+                markers = find_markers(adata, cluster, cluster_col=cluster_col)
+                top_genes = get_top_marker_genes(markers, n=10)
+
+                predicted_cell_type = annotate_cluster_with_claude(top_genes)
+
+                annotations.append({
+                    "cluster": cluster,
+                    "top_marker_genes": ", ".join(top_genes),
+                    "predicted_cell_type": predicted_cell_type
+                })
+
+                print(f"Top genes: {top_genes}")
+                print(f"Predicted cell type: {predicted_cell_type}")
+
+            annotations_df = pd.DataFrame(annotations)
+
+            print("\nCluster annotations:")
+            print(annotations_df)
+
+            filename = "outputs/cluster_annotations.csv"
+            annotations_df.to_csv(filename, index=False)
+
+            print(f"\nSaved results to {filename}")    
 
         elif command.startswith("CALL_UNKNOWN"):
             print("\nI could not tell which analysis you wanted.")
