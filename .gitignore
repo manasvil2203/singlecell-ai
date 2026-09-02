@@ -1,8 +1,16 @@
-# API keys
+# API keys and environment variables
 .env
 
-# User datasets
+# User and single-cell datasets
 *.h5ad
+
+# Downloaded clinical data
+data/raw_clinical/
+
+# Generated databases
+*.db
+*.sqlite
+*.sqlite3
 
 # Generated outputs
 outputs/
@@ -10,3 +18,7 @@ outputs/
 # Python cache
 __pycache__/
 *.pyc
+
+# OS files
+.DS_Store
+Thumbs.db

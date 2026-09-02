@@ -111,6 +111,7 @@ pip install rich
 instead of generating marker genes itself. I then modified the main section of agent.py to recognize this command, extract the cluster name, and pass it to my existing find_markers() function. This creates the first end-to-end agent workflow where Claude determines which tool to use and Python executes the actual bioinformatics analysis on the dataset
 
 7. Expanded the routing prompt to support multiple tools. Added a second command, CALL_GENE:<gene_name>, for gene expression queries. Modified the main section of agent.py to recognize this command, extract the gene name, and pass it to the query_gene_expression() function. This allows the agent to determine whether a user is requesting marker genes or gene expression analysis and route the request to the appropriate bioinformatics tool. Successfully tested using the query "Which clusters express MS4A1?" and confirmed that the results were generated from the dataset rather than from Claude's internal knowledge.
+>Note: During a later code audit, improved missing-gene error handling in query_gene_expression(). Instead of returning an error message as a string when a gene is not present in the dataset, the function now raises a KeyError. This allows the agent's existing exception handling to report the missing gene cleanly and prevents the error string from being incorrectly treated as a DataFrame and saved as a CSV.
 
 8. Expanded the routing prompt to support cluster summary requests by adding the command CALL_SUMMARY. Modified the main section of agent.py to recognize this command and route it to the get_cluster_summary() function. This allows users to ask high-level exploratory questions such as "How many clusters are in this dataset?" or "Give me a summary of the cell populations" using natural language. Successfully tested the workflow and confirmed that the cluster counts were generated directly from the dataset through the analysis tool rather than from Claude's internal knowledge.
 
@@ -125,6 +126,7 @@ instead of generating marker genes itself. I then modified the main section of a
 13. Added basic error handling to make the agent more reliable. The agent now catches invalid dataset paths, unreadable files, incorrect metadata columns, and invalid gene or cluster requests. Instead of crashing with a Python traceback, the program returns a clearer message to the user explaining what went wrong and what to check.
 
 14. Added functionality to save analysis results to files instead of only printing them to the terminal. Marker gene tables and gene expression summaries are now exported as CSV files in the outputs directory, and the agent reports the file path so users know where the results were saved.
+> Note: During a later code audit, updated the project so the outputs directory is created automatically if it does not already exist. This prevents file-saving errors when the repository is run from a fresh clone where generated output folders are not tracked by Git.
 
 15. Improved the routing prompt by introducing a CALL_UNKNOWN command. This prevents the agent from forcing vague or unrelated questions into an existing analysis tool. If a request is unclear, the agent now asks the user to specify the desired analysis and provides examples of supported queries.
 
@@ -147,3 +149,385 @@ instead of generating marker genes itself. I then modified the main section of a
 24. Refined the interpretation of the annotation output. The first annotation prompt asked for broad cell types, so Claude returned broader labels such as “T cell” instead of “CD4 T cells” or “CD8 T cells.” This was scientifically reasonable but less specific than the original labels.
 
 25. Decided not to overfit the annotation prompt with PBMC-specific examples. Instead, the annotation should be framed as preliminary marker-based interpretation. The prompt should ask Claude to be as specific as the marker evidence allows, return broad labels when evidence is ambiguous, and return “Unknown” when markers are insufficient.
+
+### Clinical Database Extension
+
+1. Decided to extend the single-cell AI agent by adding clinical metadata integration. This was added because the project was originally focused only on single-cell analysis, but real translational biomedical research often requires linking molecular data with patient-level information such as diagnosis, smoking history, treatment, and clinical outcomes.
+
+2. Chose lung cancer as the clinical use case because the Northwestern Research Data Scientist role is based in a pulmonary and translational biomedical research lab. The goal is to make the project more relevant to clinical and multimodal biomedical data exploration.
+
+3. Decided to use real public clinical metadata instead of fake example patients. TCGA-LUAD was selected as the dataset because it contains de-identified lung adenocarcinoma clinical information and is commonly used in cancer genomics research.
+
+4. Designed the first version of the clinical metadata database schema before downloading or transforming the data. This step helped define what information the project needs to store and how the tables should relate to each other.
+
+5. Created a schema with separate tables for patients, diagnoses, exposures, and samples. This keeps different types of clinical information organized instead of storing everything in one large messy table.
+
+6. Designed the patients table to store patient-level information such as patient ID, age at diagnosis, sex, race, ethnicity, vital status, days to death, and days to last follow-up.
+
+7. Designed the diagnoses table to store disease-level information such as diagnosis ID, patient ID, primary diagnosis, tumor stage, tumor grade, and days to diagnosis.
+
+8. Designed the exposures table to store smoking and exposure-related information such as exposure ID, patient ID, smoking status, years smoked, cigarettes per day, and pack-years smoked.
+
+9. Designed the samples table to connect clinical metadata to single-cell datasets. This table includes sample ID, patient ID, sample type, tissue type, and dataset path. The dataset path will eventually point to the corresponding `.h5ad` file used for Scanpy analysis.
+
+10. Decided not to store gene expression matrices inside SQL. SQL will only store structured clinical and sample metadata, while large single-cell expression matrices will remain in AnnData `.h5ad` files. This separates clinical cohort querying from single-cell analysis and uses each data format for what it is best suited for.
+
+11. Created a `schema.sql` file inside the data folder. This file acts as the database blueprint and defines the structure of the clinical metadata database before any data is loaded.
+
+12. Created a Python script called `build_clinical_db.py` to build the SQLite database from the schema file. This script opens the schema, executes the SQL table creation commands, and creates an empty database called `clinical_luad.db`.
+
+13. Confirmed the difference between the schema and the database. The schema defines the structure of the database, while the database stores the actual data. If more patients are added, the database changes, but the schema stays the same unless new types of information need to be stored.
+
+14. Planned the next step as an ETL workflow using real TCGA-LUAD clinical files. The workflow will extract raw clinical files, transform them into clean patient, diagnosis, exposure, and sample tables, and load the processed data into the SQLite database.
+
+15. Added a programmatic data extraction step for the clinical metadata extension. Created `download_tcga_luad.py`, which queries the GDC API for TCGA-LUAD case-level clinical metadata instead of manually downloading files through the web portal.
+
+16. Used the GDC cases endpoint to retrieve real de-identified clinical metadata for lung adenocarcinoma. The query filters for the TCGA-LUAD project and requests fields related to demographics, diagnosis, survival/follow-up, and smoking exposure.
+
+17. Saved the downloaded data to `data/raw_clinical/tcga_luad_cases.tsv`. The script successfully downloaded 585 TCGA-LUAD cases with 27 clinical metadata columns.
+
+18. This completes the Extract step of the ETL workflow. The next step is to inspect and transform the raw GDC output into clean tables that match the SQLite database schema.
+
+19. Created a temporary inspection script called `inspect_clinical_data.py` to examine the raw TCGA-LUAD clinical metadata file before writing the transformation code.
+
+20. Loaded `tcga_luad_cases.tsv` with pandas and printed the column names, shape, and first few rows. The file contains 585 rows and 27 columns.
+
+21. Observed that the GDC API output contains nested clinical fields flattened into column names such as `demographic.ethnicity`, `diagnoses.0.age_at_diagnosis`, and `exposures.0.tobacco_smoking_status`.
+
+22. Noted that some cases contain multiple diagnosis records represented as `diagnoses.0`, `diagnoses.1`, `diagnoses.2`, and so on. For the first version of the ETL pipeline, the project will use the first diagnosis record (`diagnoses.0`) to keep the transformation simple and interpretable.
+
+23. This inspection step helped define which raw columns should be mapped into the clean SQLite schema during the Transform stage of ETL.
+
+24. Created the ETL pipeline (`etl_clinical.py`) to perform the Transform and Load stages of the clinical metadata workflow. The script reads the raw TCGA-LUAD clinical metadata downloaded from the GDC API and converts it into a structured relational database.
+
+25. Implemented a helper function, `clean_missing()`, to standardize missing values across the clinical dataset. Common GDC values such as "not reported", "unknown", "not available", and "--" are converted to Python `None` values so they are stored as SQL `NULL` entries.
+
+26. Developed the `transform_patients()` function to create the patients table. This function extracts patient-level information including patient ID, age at diagnosis, race, ethnicity, vital status, and follow-up information from the raw GDC metadata before removing duplicate patient records.
+
+27. Developed the `transform_diagnoses()` function to construct the diagnoses table. The function extracts the primary diagnosis information from the first diagnosis record for each patient and links it back to the corresponding patient ID.
+
+28. Developed the `transform_exposures()` function to construct the exposures table. This extracts smoking-related clinical metadata including tobacco smoking status, cigarettes smoked per day, and pack-years smoked, allowing future cohort selection based on patient exposure history.
+
+29. Created the `transform_samples()` function as the foundation for connecting clinical metadata with single-cell datasets. Since patient-specific AnnData files are not yet available, placeholder sample identifiers and dataset paths were generated to establish the database relationships that will later connect clinical cohorts to `.h5ad` files.
+
+30. Implemented a reusable `load_table()` function to write transformed pandas DataFrames into SQLite tables. Separating this functionality avoids duplicated code and makes the ETL pipeline easier to maintain and extend.
+
+31. Combined the individual transformation functions into a single `run_etl()` workflow. This function reads the raw TCGA clinical metadata, transforms each entity into its corresponding relational table, and loads all four tables into the SQLite database.
+
+32. Successfully completed the first end-to-end ETL pipeline using real TCGA-LUAD clinical metadata. The workflow transformed 585 clinical cases into four normalized database tables consisting of 585 patient records, 585 diagnosis records, 585 exposure records, and 585 sample records.
+> Note: During a later code audit, discovered that using if_exists="replace" when loading pandas DataFrames into SQLite caused the schema-defined primary key and foreign key constraints to be lost because pandas dropped and recreated the tables. Changed the loading behavior to append to the existing schema-defined tables instead. The database was then rebuilt from schema.sql, the ETL pipeline was rerun, and the table definitions were checked to confirm that the primary and foreign key constraints were preserved.
+
+33. Completed the full Extract–Transform–Load workflow for the first version of the clinical metadata layer. The project now contains a reproducible pipeline that downloads clinical metadata from the GDC API, cleans and restructures the data, and loads it into a relational SQLite database for downstream querying.
+> Note: After switching from replace to append, updated the ETL workflow so it can be rerun without creating duplicate primary-key conflicts. Before loading the transformed data, the existing tables are cleared in child-to-parent order while foreign-key enforcement is enabled, and the cleaned data are then appended into the schema-defined tables.
+
+34. Created `query_clinical_db.py` as a dedicated database access layer for the project. This module provides a reusable `run_query()` function that executes SQL queries against the clinical SQLite database and returns the results as pandas DataFrames.
+>Note: During the code audit, added a read-only validation check to run_query() because SQL queries can be generated by the LLM. The query layer now only accepts queries beginning with SELECT or WITH and rejects modification commands such as DELETE. Tested the safeguard with a DELETE FROM patients query and confirmed that it was blocked while normal SELECT queries continued to work.
+
+35. Successfully queried the patients table using SQL and confirmed that the SQLite database was populated correctly following the ETL process.
+
+36. Validated the database contents by querying the total number of patient records and distinct clinical values such as vital status. This confirmed that the ETL pipeline successfully loaded all 585 TCGA-LUAD clinical cases into the database.
+
+37. While inspecting query results, observed that age at diagnosis is provided by GDC in days rather than years. To preserve the original clinical value while making the unit explicit, renamed the database field from age_at_diagnosis to age_at_diagnosis_days. Updated both the SQLite schema and ETL transformation accordingly, rebuilt the database, and confirmed that the renamed field was populated correctly.
+
+38. Extended the agent routing system to support clinical metadata queries through a new command, `CALL_SQL`. Instead of answering clinical questions directly, Claude now recognizes when a user's request involves patient metadata and generates a SQL query for execution.
+
+39. Integrated the SQLite query layer into the agent by importing the reusable `run_query()` function from `query_clinical_db.py`. This allows the agent to execute SQL queries against the TCGA-LUAD clinical database without exposing database logic to the LLM.
+
+40. Updated the routing prompt to include the clinical database schema, allowing Claude to generate SQL queries using the correct tables and columns. The prompt now distinguishes between molecular analysis requests (Scanpy tools) and clinical metadata requests (SQLite database).
+
+41. Implemented a new command dispatcher for `CALL_SQL`. When invoked, the agent executes the generated SQL query, displays the resulting patient cohort, and automatically exports the results to `outputs/clinical_query_results.csv` for downstream analysis.
+
+42. Successfully tested the first end-to-end clinical query using the natural language request "Show me all alive patients." The agent translated the request into SQL, queried the TCGA-LUAD clinical database, returned 334 matching patients, and saved the results as a CSV file. This represents the first dual-source routing capability within the project, where the agent selects between the clinical SQLite database and single-cell analysis tools based on the user's question. Patient-level integration between the clinical and molecular datasets remains a future extension
+
+
+
+### Code Audit and Reproducibility Improvements
+
+1. Refactored the agent so clinical CALL_SQL queries are handled before loading a single-cell .h5ad dataset. This allows clinical-only questions to query the SQLite database without unnecessarily requiring molecular data to be loaded first. Because external API access was temporarily unavailable during testing, validated this routing path offline by temporarily forcing a CALL_SQL command and confirming that the query returned clinical records and saved the results without prompting for a single-cell dataset.
+
+
+### Interactive Analysis Sessions
+
+1. Reorganized `src/agent.py` to support persistent interactive analysis sessions rather than requiring the program to be restarted for every question.
+
+2. Previously, the agent accepted a natural-language question first, routed the request through Claude, then loaded the single-cell dataset and performed one analysis before terminating. This meant that additional questions required re-running the program and reloading the dataset.
+
+3. Added `run_single_cell_session()` to change the workflow so that the user first selects and loads an `.h5ad` dataset, chooses the cluster or cell-type metadata column once, and can then ask multiple natural-language questions about the same loaded `AnnData` object. The session uses a `while` loop and continues until the user enters `exit` or `quit`.
+
+4. The existing Claude routing commands and deterministic Scanpy analysis tools were retained. Claude continues to act only as a routing layer, while marker detection, gene-expression queries, cluster summaries, UMAP generation, dataset inspection, and cluster annotation are performed by the existing analysis functions.
+
+5. Added `run_clinical_session()` using the same persistent-session design. Clinical questions can now be asked repeatedly against the TCGA-LUAD SQLite database without restarting the agent. Claude translates clinical questions into `CALL_SQL` commands, while SQL execution remains handled by the local query layer.
+
+6. Simplified the main execution block to function primarily as an analysis-mode selector:
+
+    1. Single-cell RNA-seq data
+    2. Clinical data
+    3. Exit
+
+7. Validated the new single-cell session using the PBMC demo dataset. The dataset loaded once with 2,638 cells and 1,838 genes, and multiple questions were successfully executed within the same session, including cluster summary and MS4A1 expression queries.
+
+8. Validated the clinical session using the TCGA-LUAD SQLite database. Multiple natural-language questions were routed and executed sequentially in one session, including counts of living patients and total patients. The session remained active between queries and exited correctly when requested.
+
+9. This refactor improves usability and separates session management from the underlying analytical functions. The current clinical mode still uses the fixed TCGA-LUAD schema and database; support for user-selected SQLite databases and dynamic schema inspection remains a planned extension.
+
+### Clinical Staging Field Debugging
+
+1. During validation of the clinical query workflow, the question “What tumor stages are represented?” returned an empty result even though the SQL query was valid.
+
+2. Inspection of the SQLite `diagnoses` table showed that all `tumor_stage` values were NULL. I then traced the issue upstream to the raw GDC download. The original downloader requested `diagnoses.tumor_stage`, but the current GDC cases mapping exposes lung cancer staging through fields such as `diagnoses.ajcc_pathologic_stage`.
+
+3. Updated `src/download_tcga_luad.py` to request `diagnoses.ajcc_pathologic_stage` and `diagnoses.tumor_grade`. After re-downloading the TCGA-LUAD clinical metadata, `diagnoses.0.ajcc_pathologic_stage` contained 398 non-null values across 585 cases, while `tumor_grade` remained unpopulated in the source data.
+
+4. Updated `src/etl_clinical.py` so the local SQLite field `tumor_stage` is populated from `diagnoses.0.ajcc_pathologic_stage`.
+
+5. After rerunning the ETL, the `diagnoses` table contained 398 non-null stage values. The natural-language query “What tumor stages are represented?” then successfully routed to a read-only SQL query and returned stages ranging from Stage I through Stage IV.
+
+6. This debugging step confirmed that the issue was caused by a mismatch between the requested GDC field and the current GDC schema rather than by the SQL generation or query layer.
+
+## Generalizing Clinical Database Support
+
+### Motivation
+
+The initial clinical extension of SingleCell-AI used a fixed TCGA-LUAD SQLite database with a known schema consisting of patients, diagnoses, exposures, and samples tables. Although this worked for the TCGA demonstration, the clinical workflow was still tightly coupled to this specific database structure.
+
+To make the system more generalizable, I extended the clinical analysis mode so that a user can provide their own SQLite database rather than being restricted to the built-in TCGA-LUAD database.
+
+### Database Selection
+
+The clinical analysis session was modified to prompt the user for a SQLite database path. If no path is provided, the system continues to use the default TCGA-LUAD database.
+
+The clinical query function was also updated so that the database path can be supplied dynamically rather than always connecting to data/clinical_luad.db.
+
+This preserved backward compatibility while allowing external SQLite databases to be analyzed.
+
+### Automatic Schema Inspection
+
+1. A new get_database_schema() function was added to query_clinical_db.py.
+
+2. The function queries SQLite metadata to identify the tables in the selected database and then uses PRAGMA table_info() to identify the columns associated with each table.
+
+3. For the TCGA-LUAD database, the automatically detected schema was:
+
+diagnoses(diagnosis_id, patient_id, primary_diagnosis, tumor_stage, tumor_grade, days_to_diagnosis)
+
+exposures(exposure_id, patient_id, smoking_status, years_smoked, cigarettes_per_day, pack_years_smoked)
+
+patients(patient_id, age_at_diagnosis_days, sex, race, ethnicity, vital_status, days_to_death, days_to_last_follow_up)
+
+samples(sample_id, patient_id, sample_type, tissue_type, dataset_path)
+
+4. The detected schema is passed to Claude as context when interpreting clinical questions. This removes the previous dependency on a hardcoded TCGA database schema.
+
+### Preserving the LLM/Computation Boundary
+
+1. The LLM continues to function as an interpretation and orchestration layer rather than performing the underlying data analysis.
+
+2. For single-cell questions, Claude interprets the user's request and routes it to deterministic Python/Scanpy functions.
+
+3. For clinical questions, Claude interprets the request and formulates a SQL query using the detected database schema. The SQL query is then executed against the actual database using SQLite/pandas.
+
+4. Therefore, Claude does not calculate clinical results itself. For example, Claude may generate:
+
+SELECT COUNT(*)
+FROM patients
+WHERE vital_status = 'Alive';
+
+but SQLite executes the query against the database and determines the result.
+
+5. The architecture can therefore be summarized as:
+
+User question
+→ LLM intent interpretation / tool or query formulation
+→ deterministic Scanpy or SQLite computation
+→ result
+
+### Regression Test with TCGA-LUAD
+
+After implementing dynamic schema detection, I tested the existing TCGA-LUAD workflow to ensure that the generalization did not break the original clinical analysis.
+
+Question:
+
+How many patients are alive?
+
+Claude generated:
+
+SELECT COUNT(*)
+FROM patients
+WHERE vital_status = 'Alive';
+
+SQLite returned:
+
+334
+
+This confirmed that the original TCGA-LUAD workflow continued to function after replacing the hardcoded schema with dynamically detected schema information.
+
+### Arbitrary SQLite Database Test
+
+To test whether the system was genuinely independent of the TCGA schema, I created a small SQLite test database with a completely different structure:
+
+cancer_cases(
+    case_id,
+    cancer_type,
+    treatment,
+    response
+)
+
+The database contained five synthetic records and did not contain any of the TCGA tables such as patients, diagnoses, exposures, or samples.
+
+When the database was loaded through the clinical analysis mode, SingleCell-AI automatically detected:
+
+cancer_cases(case_id, cancer_type, treatment, response)
+
+I then asked:
+
+How many cases have cancer_type equal to Lung and treatment equal to Drug A?
+
+Claude generated:
+
+SELECT COUNT(*)
+FROM cancer_cases
+WHERE cancer_type = 'Lung'
+AND treatment = 'Drug A';
+
+SQLite returned:
+
+2
+
+This demonstrated that clinical SQL generation was using the dynamically detected schema rather than relying on the original TCGA table structure.
+
+### Important Limitation Identified
+
+An earlier natural-language version of the same question asked:
+
+How many lung cancer cases received Drug A?
+
+Claude generated a query using:
+
+cancer_type = 'lung cancer'
+
+However, the database stored the categorical value as:
+
+Lung
+
+SQLite therefore correctly returned zero records.
+
+This exposed an important distinction between understanding database structure and understanding the exact values stored within a database. Schema inspection tells the LLM which tables and columns exist, but it does not reveal the categorical values contained within those columns.
+
+I intentionally did not immediately expose database records or categorical values to the LLM because doing so would change the current separation between the LLM interpretation layer and the deterministic data layer. This limitation will be considered as part of future improvements to clinical query grounding.
+
+### Current Status
+
+At this stage, the clinical workflow supports:
+
+- Persistent multi-question clinical analysis sessions
+- Default TCGA-LUAD clinical database
+- User-provided SQLite database paths
+- Automatic table and column discovery
+- Dynamic schema-aware SQL generation
+- Read-only SQL execution
+- Saving query results to CSV
+- Successful execution against a database with a previously unseen schema
+
+The next development step is to improve the robustness of schema representation and clinical query grounding while preserving the design principle that the LLM interprets and routes requests but does not perform the underlying biological computation.
+
+### Schema Metadata Improvement
+
+Updated `get_database_schema()` to include SQLite column data types in the automatically detected schema. For example, the test database is now represented as:
+
+cancer_cases(case_id TEXT, cancer_type TEXT, treatment TEXT, response TEXT)
+
+This provides the LLM with more precise structural metadata for SQL formulation without exposing the underlying database records or changing the separation between the LLM interpretation layer and deterministic data execution.
+
+### Categorical Value Grounding as Future Work
+
+I decided not to expose database categorical values directly to the LLM in the current implementation. The system therefore uses database schema metadata to formulate SQL but does not provide Claude with the underlying records or lists of stored values.
+
+As a result, natural-language terminology may not always match the exact categorical encoding used by a database, such as "lung cancer" versus "Lung." This is retained as a known limitation rather than adding additional LLM access to the data.
+
+A future extension could address this through a deterministic value-grounding layer in which Python/SQLite identifies valid categorical values before SQL formulation. This would improve natural-language robustness while preserving the separation between LLM-based interpretation and deterministic data access and computation.
+
+
+## Regression Testing and Prototype Stabilization
+
+After completing the interactive session and dynamic clinical database extensions, I performed end-to-end regression testing of both the single-cell and clinical workflows. The goal was to verify that the new functionality had not broken previously implemented tools before moving from active development into project stabilization.
+
+### Single-Cell Regression Testing
+
+The demo PBMC dataset was loaded once and all tests were performed within the same interactive session. This also validated that the persistent session architecture was functioning correctly.
+
+The following functionality was tested successfully:
+
+- Dataset information and metadata inspection
+- Cluster summary
+- Marker gene analysis for an individual cluster
+- Marker gene analysis across all clusters
+- Gene expression queries across clusters
+- UMAP generation and output saving
+- LLM-assisted cluster annotation
+- Invalid gene handling
+- Clean session exit
+
+All nine tests completed successfully.
+
+Biological sanity checks were also performed on the outputs. For example, B-cell marker analysis identified CD79A, CD74, CD79B, HLA-DRA, and MS4A1 among the strongest markers. An MS4A1 expression query also showed substantially higher average expression in B cells than in the other PBMC populations.
+
+The invalid gene test used a deliberately nonexistent gene, FAKEGENE12345. The tool returned an informative error rather than terminating the interactive session, confirming that missing-gene error handling was functioning correctly.
+
+A pandas FutureWarning was observed during dataset-wide marker analysis. Because it does not currently affect the analysis result, it was documented as a minor compatibility warning rather than treated as a blocking issue.
+
+### Cluster Annotation Scope
+
+The annotation regression test confirmed that the current CALL_ANNOTATE workflow successfully identifies marker genes and generates preliminary annotations for all clusters.
+
+However, the current implementation performs dataset-wide annotation even when a user names an individual cluster. More importantly, the annotations are currently generated by providing marker genes to Claude for interpretation.
+
+Rather than expanding this implementation immediately, I decided to treat annotation as a major future development area. The planned direction is to move toward reference-grounded annotation using established cell-type references and tools such as CellTypist or celldex. This would provide stronger biological grounding than relying primarily on LLM interpretation of marker genes.
+
+### Clinical Regression Testing
+
+The clinical workflow was tested separately using both the default TCGA-LUAD database and the synthetic SQLite database created during development.
+
+The following tests completed successfully:
+
+- Default TCGA-LUAD patient count
+- Tumor-stage retrieval
+- Multi-table SQL JOIN
+- Querying a user-provided SQLite database with an unfamiliar schema
+- Invalid database path handling
+- Read-only SQL protection
+
+All six clinical regression tests passed.
+
+The default TCGA-LUAD database returned 585 unique patients.
+
+The tumor-stage query successfully returned the AJCC pathologic stages represented in the database, confirming that the earlier GDC staging-field and ETL fixes remained functional after later refactoring.
+
+A multi-table question asking how many alive patients had a recorded smoking status generated a JOIN between the patients and exposures tables using patient_id and returned 330 unique patients.
+
+The synthetic database regression test again confirmed that SingleCell-AI could inspect and query a database containing the unfamiliar cancer_cases table rather than relying on the TCGA schema.
+
+### SQL Safety Test
+
+The clinical query layer was explicitly tested with a destructive SQL statement:
+
+DELETE FROM patients
+
+The query was rejected with:
+
+ValueError: Only read-only SELECT queries are allowed.
+
+This confirmed that the current read-only query guard prevents direct modification statements from being executed through the clinical query function.
+
+The current guard is intentionally basic and should not be considered a complete SQL sandbox. Stronger validation and safety controls remain a future development direction.
+
+### Current Prototype Status
+
+At this checkpoint, the major planned prototype functionality is operational and has passed regression testing.
+
+Single-cell analysis supports persistent natural-language sessions connected to deterministic Scanpy/Python analysis tools.
+
+Clinical analysis supports persistent natural-language sessions, the default TCGA-LUAD database, user-provided SQLite databases, automatic schema inspection, dynamic schema-aware SQL formulation, and read-only query execution.
+
+The LLM remains responsible for intent interpretation, tool routing, and clinical SQL formulation. The underlying scientific and database computations are performed by deterministic tools operating on the actual data.
+
+With the major functionality validated, further development will focus on clearly scoped future extensions rather than adding additional features before project stabilization.

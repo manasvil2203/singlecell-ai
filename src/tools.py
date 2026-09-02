@@ -1,5 +1,5 @@
 import scanpy as sc
-
+from pathlib import Path
 
 def load_dataset(filepath=None):
     """
@@ -29,8 +29,8 @@ def query_gene_expression(adata, gene, cluster_col="louvain"):
     Return the average expression of a gene across clusters.
     """
     if gene not in adata.var_names:
-        return f"Gene '{gene}' not found in dataset."
-
+        raise KeyError(f"Gene '{gene}' not found in dataset.")
+    
     gene_expression = adata[:, gene].to_df()
     gene_expression[cluster_col] = adata.obs[cluster_col].values
 
@@ -51,6 +51,9 @@ def plot_umap(adata, color_by="louvain", output_file="outputs/umap.png"):
     )
 
     import matplotlib.pyplot as plt
+
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    
     plt.savefig(output_file, bbox_inches="tight", dpi=300)
     plt.close()
 
